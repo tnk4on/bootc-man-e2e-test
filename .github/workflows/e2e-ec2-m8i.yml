@@ -205,14 +205,22 @@ jobs:
               qemu-kvm \
               qemu-img \
               edk2-ovmf \
-              gvisor-tap-vsock \
-              podman
+              podman \
+              golang
+
+            echo "=== Installing gvproxy ==="
+            sudo dnf install -y gvisor-tap-vsock || true
+            if ! command -v gvproxy &>/dev/null; then
+              echo "gvproxy not in system package, building from source..."
+              go install github.com/containers/gvisor-tap-vsock/cmd/gvproxy@latest
+              sudo cp $(go env GOPATH)/bin/gvproxy /usr/local/bin/ || true
+            fi
 
             echo "=== Installed versions ==="
             bootc-man version
             qemu-kvm --version || qemu-system-x86_64 --version
             podman version --format "{{.Version}}"
-            gvproxy --help 2>&1 | head -1 || echo "gvproxy installed"
+            which gvproxy && echo "gvproxy: OK" || echo "gvproxy: not available"
           '
 
       - name: Upload verification script

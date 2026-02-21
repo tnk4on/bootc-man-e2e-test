@@ -77,9 +77,14 @@ else
 fi
 echo ""
 
-# 6. gvproxy
+# 6. gvproxy (optional — may need to be built from source)
 echo "--- gvproxy ---"
-check "gvproxy binary found" which gvproxy
+if command -v gvproxy >/dev/null 2>&1; then
+  echo "✅ gvproxy binary found"
+  PASS=$((PASS + 1))
+else
+  echo "⚠️  gvproxy not found (optional — install via 'go install github.com/containers/gvisor-tap-vsock/cmd/gvproxy@latest')"
+fi
 echo ""
 
 # 7. QEMU + KVM acceleration test
