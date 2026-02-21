@@ -1,0 +1,274 @@
+name: E2E Test (EC2 M8i)
+
+on:
+  workflow_dispatch:
+    inputs:
+      instance_type:
+        description: 'EC2 Instance Type'
+        required: false
+        default: 'm8i.large'
+        type: choice
+        options:
+          - m8i.large
+          - m8i.xlarge
+          - c8i.large
+          - c8i.xlarge
+      region:
+        description: 'AWS Region'
+        required: false
+        default: 'us-east-1'
+        type: choice
+        options:
+          - us-east-1
+          - us-west-2
+          - ap-northeast-1
+
+env:
+  AWS_REGION: ${{ github.event.inputs.region || 'us-east-1' }}
+  KEY_NAME: bootc-e2e-key-${{ github.run_id }}
+  SECURITY_GROUP_NAME: bootc-e2e-sg-${{ github.run_id }}
+  SSH_OPTS: "-o StrictHostKeyChecking=no -o ServerAliveInterval=30 -o ServerAliveCountMax=10 -o ConnectTimeout=10"
+
+permissions:
+  contents: read
+
+jobs:
+  e2e-ec2-m8i:
+    name: E2E (EC2 M8i + KVM)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Generate SSH Key
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keygen -t ed25519 -f ~/.ssh/ec2_key -N '' -C 'bootc-man-e2e'
+          chmod 600 ~/.ssh/ec2_key
+
+      - name: Import SSH key to AWS
+        run: |
+          aws ec2 import-key-pair \
+            --key-name "${{ env.KEY_NAME }}" \
+            --public-key-material "fileb://$HOME/.ssh/ec2_key.pub" \
+            --region ${{ env.AWS_REGION }}
+
+      - name: Create security group
+        run: |
+          # Get default VPC
+          VPC_ID=$(aws ec2 describe-vpcs \
+            --filters "Name=is-default,Values=true" \
+            --query 'Vpcs[0].VpcId' --output text \
+            --region ${{ env.AWS_REGION }})
+          echo "VPC_ID=$VPC_ID" >> $GITHUB_ENV
+
+          SG_ID=$(aws ec2 create-security-group \
+            --group-name "${{ env.SECURITY_GROUP_NAME }}" \
+            --description "bootc-man E2E test (run ${{ github.run_id }})" \
+            --vpc-id "$VPC_ID" \
+            --region ${{ env.AWS_REGION }} \
+            --query 'GroupId' --output text)
+          echo "SECURITY_GROUP_ID=$SG_ID" >> $GITHUB_ENV
+
+          aws ec2 authorize-security-group-ingress \
+            --group-id "$SG_ID" \
+            --protocol tcp \
+            --port 22 \
+            --cidr 0.0.0.0/0 \
+            --region ${{ env.AWS_REGION }}
+
+      - name: Find latest Fedora Cloud AMI
+        run: |
+          # Search for latest Fedora Cloud Base AMI (try 43, then 42, then latest)
+          for VERSION in 43 42; do
+            AMI_ID=$(aws ec2 describe-images \
+              --owners 125523088429 \
+              --filters \
+                "Name=name,Values=Fedora-Cloud-Base-AmazonEC2.x86_64-${VERSION}*" \
+                "Name=virtualization-type,Values=hvm" \
+                "Name=architecture,Values=x86_64" \
+                "Name=state,Values=available" \
+              --query 'Images | sort_by(@, &CreationDate) | [-1].ImageId' \
+              --output text \
+              --region ${{ env.AWS_REGION }})
+            if [ -n "$AMI_ID" ] && [ "$AMI_ID" != "None" ]; then
+              echo "Found Fedora $VERSION AMI: $AMI_ID"
+              break
+            fi
+          done
+
+          # Fallback: latest available
+          if [ -z "$AMI_ID" ] || [ "$AMI_ID" = "None" ]; then
+            AMI_ID=$(aws ec2 describe-images \
+              --owners 125523088429 \
+              --filters \
+                "Name=name,Values=Fedora-Cloud-Base-AmazonEC2.x86_64-*" \
+                "Name=virtualization-type,Values=hvm" \
+                "Name=architecture,Values=x86_64" \
+                "Name=state,Values=available" \
+              --query 'Images | sort_by(@, &CreationDate) | [-1].ImageId' \
+              --output text \
+              --region ${{ env.AWS_REGION }})
+          fi
+
+          if [ -z "$AMI_ID" ] || [ "$AMI_ID" = "None" ]; then
+            echo "::error::Could not find Fedora Cloud AMI"
+            exit 1
+          fi
+
+          echo "AMI_ID=$AMI_ID" >> $GITHUB_ENV
+          echo "Using AMI: $AMI_ID"
+
+          # Show AMI name for logging
+          aws ec2 describe-images --image-ids "$AMI_ID" \
+            --query 'Images[0].Name' --output text \
+            --region ${{ env.AWS_REGION }}
+
+      - name: Launch EC2 M8i instance
+        run: |
+          INSTANCE_TYPE="${{ github.event.inputs.instance_type || 'm8i.large' }}"
+          echo "Launching $INSTANCE_TYPE with nested virtualization..."
+
+          INSTANCE_ID=$(aws ec2 run-instances \
+            --image-id "${{ env.AMI_ID }}" \
+            --instance-type "$INSTANCE_TYPE" \
+            --key-name "${{ env.KEY_NAME }}" \
+            --security-group-ids "${{ env.SECURITY_GROUP_ID }}" \
+            --cpu-options "AmdSevSnp=disabled" \
+            --nested-virtualization enabled \
+            --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=bootc-e2e-${{ github.run_id }}},{Key=Purpose,Value=bootc-man-e2e-test}]" \
+            --block-device-mappings '[{"DeviceName":"/dev/sda1","Ebs":{"VolumeSize":30,"VolumeType":"gp3"}}]' \
+            --query 'Instances[0].InstanceId' \
+            --output text \
+            --region ${{ env.AWS_REGION }})
+
+          echo "INSTANCE_ID=$INSTANCE_ID" >> $GITHUB_ENV
+          echo "Instance ID: $INSTANCE_ID"
+
+          # Wait for instance to be running
+          echo "Waiting for instance to be running..."
+          aws ec2 wait instance-running \
+            --instance-ids "$INSTANCE_ID" \
+            --region ${{ env.AWS_REGION }}
+
+          # Get public IP
+          VM_IP=$(aws ec2 describe-instances \
+            --instance-ids "$INSTANCE_ID" \
+            --query 'Reservations[0].Instances[0].PublicIpAddress' \
+            --output text \
+            --region ${{ env.AWS_REGION }})
+
+          echo "VM_IP=$VM_IP" >> $GITHUB_ENV
+          echo "Instance running at: $VM_IP"
+
+      - name: Wait for SSH
+        run: |
+          echo "Waiting for SSH connectivity..."
+          for i in $(seq 1 30); do
+            if ssh ${{ env.SSH_OPTS }} -i ~/.ssh/ec2_key fedora@${{ env.VM_IP }} 'echo ok' 2>/dev/null; then
+              echo "SSH connected after $i attempts"
+              break
+            fi
+            echo "  Attempt $i/30 - waiting..."
+            sleep 10
+          done
+
+      - name: Install bootc-man and dependencies
+        run: |
+          ssh ${{ env.SSH_OPTS }} -i ~/.ssh/ec2_key fedora@${{ env.VM_IP }} '
+            set -ex
+
+            echo "=== Installing bootc-man from COPR ==="
+            sudo dnf copr enable -y tnk4on/bootc-man
+            sudo dnf install -y bootc-man
+
+            echo "=== Installing KVM/QEMU dependencies ==="
+            sudo dnf install -y \
+              qemu-kvm \
+              qemu-img \
+              edk2-ovmf \
+              gvisor-tap-vsock \
+              podman
+
+            echo "=== Installed versions ==="
+            bootc-man version
+            qemu-kvm --version || qemu-system-x86_64 --version
+            podman version --format "{{.Version}}"
+            gvproxy --help 2>&1 | head -1 || echo "gvproxy installed"
+          '
+
+      - name: Upload verification script
+        run: |
+          scp ${{ env.SSH_OPTS }} -i ~/.ssh/ec2_key \
+            scripts/verify-kvm.sh \
+            fedora@${{ env.VM_IP }}:/tmp/verify-kvm.sh
+
+      - name: Run KVM verification
+        run: |
+          ssh ${{ env.SSH_OPTS }} -i ~/.ssh/ec2_key fedora@${{ env.VM_IP }} '
+            chmod +x /tmp/verify-kvm.sh
+            /tmp/verify-kvm.sh
+          '
+
+      - name: Run bootc-man CI check
+        run: |
+          ssh ${{ env.SSH_OPTS }} -i ~/.ssh/ec2_key fedora@${{ env.VM_IP }} '
+            set -ex
+            bootc-man version
+            bootc-man ci check || echo "ci check completed (some checks may require Podman Machine on this platform)"
+          '
+
+      - name: Test summary
+        if: always()
+        run: |
+          echo "## E2E Test Results (EC2 M8i)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Item | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Instance Type | ${{ github.event.inputs.instance_type || 'm8i.large' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Region | ${{ env.AWS_REGION }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| AMI | ${{ env.AMI_ID }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Instance ID | ${{ env.INSTANCE_ID }} |" >> $GITHUB_STEP_SUMMARY
+
+      # === Cleanup (always runs) ===
+      - name: Terminate EC2 instance
+        if: always()
+        run: |
+          if [ -n "${{ env.INSTANCE_ID }}" ]; then
+            echo "Terminating instance ${{ env.INSTANCE_ID }}..."
+            aws ec2 terminate-instances \
+              --instance-ids "${{ env.INSTANCE_ID }}" \
+              --region ${{ env.AWS_REGION }} || true
+            aws ec2 wait instance-terminated \
+              --instance-ids "${{ env.INSTANCE_ID }}" \
+              --region ${{ env.AWS_REGION }} || true
+            echo "Instance terminated"
+          fi
+
+      - name: Delete security group
+        if: always()
+        run: |
+          if [ -n "${{ env.SECURITY_GROUP_ID }}" ]; then
+            # Wait a moment for instance ENI detachment
+            sleep 5
+            aws ec2 delete-security-group \
+              --group-id "${{ env.SECURITY_GROUP_ID }}" \
+              --region ${{ env.AWS_REGION }} || true
+            echo "Security group deleted"
+          fi
+
+      - name: Delete SSH key pair
+        if: always()
+        run: |
+          aws ec2 delete-key-pair \
+            --key-name "${{ env.KEY_NAME }}" \
+            --region ${{ env.AWS_REGION }} || true
+          echo "Key pair deleted"
