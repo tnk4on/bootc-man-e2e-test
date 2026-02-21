@@ -20,14 +20,6 @@ check() {
 echo "=== vfkit/gvproxy Verification on macOS ==="
 echo ""
 
-# 0. Add Homebrew libexec to PATH (vfkit/gvproxy installed there by brew formula)
-BREW_PREFIX="$(brew --prefix 2>/dev/null || echo /opt/homebrew)"
-if [ -d "${BREW_PREFIX}/libexec/bootc-man" ]; then
-  export PATH="${BREW_PREFIX}/libexec/bootc-man:${PATH}"
-  echo "Added ${BREW_PREFIX}/libexec/bootc-man to PATH"
-fi
-echo ""
-
 # 1. System info
 echo "--- System Info ---"
 echo "  OS: $(sw_vers -productName) $(sw_vers -productVersion)"
@@ -55,7 +47,7 @@ echo ""
 echo "--- Podman ---"
 check "podman binary found" which podman
 if command -v podman >/dev/null 2>&1; then
-  podman version --format "{{.Version}}" 2>/dev/null || podman --version
+  podman --version
 fi
 echo ""
 

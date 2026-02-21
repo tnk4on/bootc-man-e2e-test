@@ -3,31 +3,36 @@ macos_vfkit_task:
   macos_instance:
     image: ghcr.io/cirruslabs/macos-ventura-base:latest
 
-  env:
-    # vfkit and gvproxy are installed to libexec/bootc-man/ by Homebrew formula
-    PATH: "${HOMEBREW_PREFIX}/libexec/bootc-man:${PATH}"
-
-  install_podman_script:
+  install_deps_script:
+    - set -ex
+    # Install podman (includes gvproxy in its libexec)
     - brew install podman
-
-  install_bootc_man_script:
+    # Install vfkit (standalone Homebrew formula)
+    - brew install vfkit
+    # Install bootc-man
     - brew tap tnk4on/bootc-man
     - brew install bootc-man
-    # Verify libexec binaries exist
-    - ls -la $(brew --prefix)/libexec/bootc-man/
+
+  verify_paths_script:
+    - set -ex
+    # Find where gvproxy is installed (bundled with Podman)
+    - GVPROXY_PATH=$(find $(brew --cellar podman) -name gvproxy -type f 2>/dev/null | head -1)
+    - echo "gvproxy found at $GVPROXY_PATH"
+    - test -n "$GVPROXY_PATH"
+    # Symlink gvproxy to a directory in PATH
+    - sudo ln -sf "$GVPROXY_PATH" /usr/local/bin/gvproxy
+    - which gvproxy
+    - which vfkit
+    - which bootc-man
 
   verify_versions_script:
     - set -ex
     - echo "=== bootc-man ==="
     - bootc-man version
-    - echo ""
     - echo "=== podman ==="
-    - podman version --format "{{.Version}}" || podman --version
-    - echo ""
+    - podman --version
     - echo "=== vfkit ==="
-    - which vfkit
     - vfkit --version 2>&1
-    - echo ""
     - echo "=== gvproxy ==="
     - which gvproxy
 
