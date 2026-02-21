@@ -236,12 +236,12 @@ jobs:
             /tmp/verify-kvm.sh
           '
 
-      - name: Run bootc-man CI check
+      - name: Verify bootc-man
         run: |
           ssh ${{ env.SSH_OPTS }} -i ~/.ssh/ec2_key fedora@${{ env.VM_IP }} '
             set -ex
             bootc-man version
-            bootc-man ci check || echo "ci check completed (some checks may require Podman Machine on this platform)"
+            bootc-man status
           '
 
       - name: Test summary

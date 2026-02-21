@@ -3,14 +3,21 @@ macos_vfkit_task:
   macos_instance:
     image: ghcr.io/cirruslabs/macos-ventura-base:latest
 
+  env:
+    # vfkit and gvproxy are installed to libexec/bootc-man/ by Homebrew formula
+    PATH: "${HOMEBREW_PREFIX}/libexec/bootc-man:${PATH}"
+
   install_podman_script:
     - brew install podman
 
   install_bootc_man_script:
     - brew tap tnk4on/bootc-man
     - brew install bootc-man
+    # Verify libexec binaries exist
+    - ls -la $(brew --prefix)/libexec/bootc-man/
 
   verify_versions_script:
+    - set -ex
     - echo "=== bootc-man ==="
     - bootc-man version
     - echo ""
@@ -18,14 +25,17 @@ macos_vfkit_task:
     - podman version --format "{{.Version}}" || podman --version
     - echo ""
     - echo "=== vfkit ==="
-    - which vfkit && vfkit --version 2>&1 || echo "vfkit not found"
+    - which vfkit
+    - vfkit --version 2>&1
     - echo ""
     - echo "=== gvproxy ==="
-    - which gvproxy && gvproxy --help 2>&1 | head -1 || echo "gvproxy not found"
+    - which gvproxy
 
   run_verify_script:
     - chmod +x scripts/verify-vfkit.sh
     - scripts/verify-vfkit.sh
 
-  bootc_man_check_script:
-    - bootc-man ci check || echo "ci check completed (some checks may require Podman Machine)"
+  verify_bootc_man_script:
+    - set -ex
+    - bootc-man version
+    - bootc-man status
