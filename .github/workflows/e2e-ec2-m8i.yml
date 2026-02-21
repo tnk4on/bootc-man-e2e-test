@@ -48,6 +48,17 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
+      - name: Upgrade AWS CLI
+        run: |
+          echo "Current AWS CLI version:"
+          aws --version
+          echo "Upgrading to latest..."
+          curl -sL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip
+          unzip -q -o /tmp/awscliv2.zip -d /tmp
+          sudo /tmp/aws/install --update
+          echo "Updated AWS CLI version:"
+          aws --version
+
       - name: Generate SSH Key
         run: |
           mkdir -p ~/.ssh
