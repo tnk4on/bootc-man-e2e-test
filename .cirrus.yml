@@ -1,46 +1,81 @@
-macos_vfkit_task:
+macos_e2e_task:
   name: "E2E (macOS + vfkit)"
   macos_instance:
-    image: ghcr.io/cirruslabs/macos-ventura-base:latest
+    image: ghcr.io/cirruslabs/macos-runner:sonoma
+
+  timeout_in: 60m
+
+  env:
+    CI: "true"
+    BOOTC_MAN_REF: main
 
   install_deps_script:
     - set -ex
-    # Install podman (includes gvproxy in its libexec)
-    - brew install podman
-    # Install vfkit (standalone Homebrew formula)
-    - brew install vfkit
-    # Install bootc-man
-    - brew tap tnk4on/bootc-man
-    - brew install bootc-man
-
-  verify_paths_script:
-    - set -ex
-    # Find where gvproxy is installed (bundled with Podman)
+    # Install system dependencies
+    - brew install podman vfkit golang git
+    # Symlink gvproxy from Podman's Cellar
     - GVPROXY_PATH=$(find $(brew --cellar podman) -name gvproxy -type f 2>/dev/null | head -1)
-    - echo "gvproxy found at $GVPROXY_PATH"
-    - test -n "$GVPROXY_PATH"
-    # Symlink gvproxy to a directory in PATH
-    - sudo ln -sf "$GVPROXY_PATH" /usr/local/bin/gvproxy
-    - which gvproxy
-    - which vfkit
-    - which bootc-man
+    - test -n "$GVPROXY_PATH" && sudo ln -sf "$GVPROXY_PATH" /usr/local/bin/gvproxy
+    # Generate SSH key for E2E tests
+    - mkdir -p ~/.ssh
+    - ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519 -N "" -C "bootc-man-ci"
 
-  verify_versions_script:
+  clone_bootc_man_script:
     - set -ex
-    - echo "=== bootc-man ==="
-    - bootc-man version
-    - echo "=== podman ==="
-    - podman --version
-    - echo "=== vfkit ==="
-    - vfkit --version 2>&1
-    - echo "=== gvproxy ==="
-    - which gvproxy
+    - git clone --depth=1 --branch=${BOOTC_MAN_REF}
+        https://github.com/tnk4on/bootc-man.git ~/bootc-man
 
-  run_verify_script:
-    - chmod +x scripts/verify-vfkit.sh
-    - scripts/verify-vfkit.sh
-
-  verify_bootc_man_script:
+  build_bootc_man_script:
     - set -ex
-    - bootc-man version
-    - bootc-man status
+    - cd ~/bootc-man
+    - make build
+    - ./bin/bootc-man version
+
+  verify_env_script:
+    - set -ex
+    - echo "=== Environment ==="
+    - echo "Go:" && go version
+    - echo "Podman:" && podman --version
+    - echo "vfkit:" && vfkit --version 2>&1
+    - echo "gvproxy:" && which gvproxy
+    - echo "SSH key:" && ls -la ~/.ssh/id_ed25519.pub
+
+  # macOS requires TMPDIR under $HOME for Podman Machine (libkrun)
+  e2e_phase1_script:
+    - set -ex
+    - cd ~/bootc-man
+    - export TMPDIR=$HOME/.local/share/bootc-man/tmp
+    - mkdir -p $TMPDIR
+    - echo "=== Phase 1: Non-VM tests ==="
+    - go test -v -tags=e2e -timeout=30m
+        -run '^Test(Container|Registry|CI|E2E|Podman|BootcMan)'
+        -count=1 ./test/e2e/...
+
+  e2e_phase2_script:
+    - set -ex
+    - cd ~/bootc-man
+    - export TMPDIR=$HOME/.local/share/bootc-man/tmp
+    - mkdir -p $TMPDIR
+    - echo "=== Phase 2: VM boot tests ==="
+    - go test -v -tags=e2e -timeout=30m
+        -run '^TestVM(Boot|SSHConnection|InfrastructureAvailability|List|Status)'
+        -count=1 ./test/e2e/...
+
+  e2e_phase3_script:
+    - set -ex
+    - cd ~/bootc-man
+    - export TMPDIR=$HOME/.local/share/bootc-man/tmp
+    - mkdir -p $TMPDIR
+    - echo "=== Phase 3: Bootc tests (requires running VM) ==="
+    - go test -v -tags=e2e -timeout=30m
+        -run '^TestBootc(Status|StatusJSON|Upgrade|Switch|Rollback)'
+        -count=1 ./test/e2e/...
+
+  always:
+    e2e_cleanup_script:
+      - cd ~/bootc-man 2>/dev/null || exit 0
+      - export TMPDIR=$HOME/.local/share/bootc-man/tmp
+      - echo "=== Phase 4: VM cleanup ==="
+      - go test -v -tags=e2e -timeout=5m
+          -run '^TestVMCleanup'
+          -count=1 ./test/e2e/... || true
