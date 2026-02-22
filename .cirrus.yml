@@ -26,11 +26,11 @@ macos_e2e_task:
     - podman machine init --cpus 4 --memory 4096 --disk-size 60
     - echo "=== Starting Podman Machine ==="
     - podman machine start
-    - echo "=== Podman Machine Info ==="
+    - echo "=== Verifying Podman Machine ==="
     - podman machine info
     - podman info --format '{{.Host.MachineState}}'
     - podman version
-    - echo "=== Verifying Podman is functional ==="
+    - echo "=== Smoke test ==="
     - podman run --rm docker.io/library/alpine:latest echo "Podman works!"
 
   clone_bootc_man_script:
