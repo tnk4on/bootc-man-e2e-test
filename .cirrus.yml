@@ -1,7 +1,7 @@
 macos_e2e_task:
   name: "E2E (macOS + vfkit)"
   macos_instance:
-    image: ghcr.io/cirruslabs/macos-runner:sonoma
+    image: ghcr.io/cirruslabs/macos-runner:sequoia
 
   timeout_in: 60m
 
@@ -20,10 +20,18 @@ macos_e2e_task:
     - mkdir -p ~/.ssh
     - ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519 -N "" -C "bootc-man-ci"
 
-  # Note: Podman Machine cannot start in Cirrus CI macOS VMs because nested
-  # virtualization (Apple Hypervisor Framework) is not supported inside VMs.
-  # Tests that require Podman Machine will be skipped via SkipIfPodmanUnavailable.
-  # Full VM boot E2E tests run on EC2 M8i (Linux) via GitHub Actions.
+  setup_podman_machine_script:
+    - set -ex
+    - echo "=== Initializing Podman Machine ==="
+    - podman machine init --cpus 4 --memory 4096 --disk-size 60
+    - echo "=== Starting Podman Machine ==="
+    - podman machine start
+    - echo "=== Podman Machine Info ==="
+    - podman machine info
+    - podman info --format '{{.Host.MachineState}}'
+    - podman version
+    - echo "=== Verifying Podman is functional ==="
+    - podman run --rm docker.io/library/alpine:latest echo "Podman works!"
 
   clone_bootc_man_script:
     - set -ex
@@ -44,18 +52,14 @@ macos_e2e_task:
     - echo "vfkit:" && vfkit --version 2>&1
     - echo "gvproxy:" && which gvproxy
     - echo "SSH key:" && ls -la ~/.ssh/id_ed25519.pub
-    - echo ""
-    - echo "Note: Podman Machine cannot start in Cirrus CI (nested virt not supported)."
-    - echo "Tests requiring Podman Machine will be skipped."
+    - echo "Podman Machine:" && podman machine info
 
-  # macOS requires TMPDIR under $HOME for Podman Machine (libkrun)
   e2e_phase1_script:
     - set -ex
     - cd ~/bootc-man
     - export TMPDIR=$HOME/.local/share/bootc-man/tmp
     - mkdir -p $TMPDIR
     - echo "=== Phase 1: Non-VM tests ==="
-    - echo "(Tests requiring Podman will be skipped)"
     - go test -v -tags=e2e -timeout=30m
         -run '^Test(Container|Registry|CI|E2E|Podman|BootcMan)'
         -count=1 ./test/e2e/...
@@ -66,7 +70,6 @@ macos_e2e_task:
     - export TMPDIR=$HOME/.local/share/bootc-man/tmp
     - mkdir -p $TMPDIR
     - echo "=== Phase 2: VM boot tests ==="
-    - echo "(TestVMBoot will be skipped — requires Podman Machine)"
     - go test -v -tags=e2e -timeout=30m
         -run '^TestVM(Boot|SSHConnection|InfrastructureAvailability|List|Status)'
         -count=1 ./test/e2e/...
@@ -76,8 +79,7 @@ macos_e2e_task:
     - cd ~/bootc-man
     - export TMPDIR=$HOME/.local/share/bootc-man/tmp
     - mkdir -p $TMPDIR
-    - echo "=== Phase 3: Bootc tests ==="
-    - echo "(All bootc tests will be skipped — requires running VM)"
+    - echo "=== Phase 3: Bootc tests (requires running VM) ==="
     - go test -v -tags=e2e -timeout=30m
         -run '^TestBootc(Status|StatusJSON|Upgrade|Switch|Rollback)'
         -count=1 ./test/e2e/...
@@ -90,3 +92,5 @@ macos_e2e_task:
       - go test -v -tags=e2e -timeout=5m
           -run '^TestVMCleanup'
           -count=1 ./test/e2e/... || true
+    stop_podman_machine_script:
+      - podman machine stop 2>/dev/null || true
