@@ -145,7 +145,7 @@ jobs:
             --security-group-ids "${{ env.SECURITY_GROUP_ID }}" \
             --cpu-options "NestedVirtualization=enabled" \
             --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=bootc-e2e-${{ github.run_id }}},{Key=Purpose,Value=bootc-man-e2e-test}]" \
-            --block-device-mappings '[{"DeviceName":"/dev/sda1","Ebs":{"VolumeSize":40,"VolumeType":"gp3"}}]' \
+            --block-device-mappings '[{"DeviceName":"/dev/sda1","Ebs":{"VolumeSize":60,"VolumeType":"gp3"}}]' \
             --query 'Instances[0].InstanceId' \
             --output text \
             --region ${{ env.AWS_REGION }})

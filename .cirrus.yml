@@ -20,6 +20,16 @@ macos_e2e_task:
     - mkdir -p ~/.ssh
     - ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519 -N "" -C "bootc-man-ci"
 
+  setup_podman_machine_script:
+    - set -ex
+    - echo "=== Initializing Podman Machine ==="
+    - podman machine init --cpus 4 --memory 4096 --disk-size 60
+    - podman machine start
+    - podman machine info
+    - echo "=== Verifying Podman ==="
+    - podman info --format '{{.Host.MachineState}}'
+    - podman version
+
   clone_bootc_man_script:
     - set -ex
     - git clone --depth=1 --branch=${BOOTC_MAN_REF}
@@ -39,6 +49,7 @@ macos_e2e_task:
     - echo "vfkit:" && vfkit --version 2>&1
     - echo "gvproxy:" && which gvproxy
     - echo "SSH key:" && ls -la ~/.ssh/id_ed25519.pub
+    - echo "Podman Machine:" && podman machine info
 
   # macOS requires TMPDIR under $HOME for Podman Machine (libkrun)
   e2e_phase1_script:
@@ -79,3 +90,5 @@ macos_e2e_task:
       - go test -v -tags=e2e -timeout=5m
           -run '^TestVMCleanup'
           -count=1 ./test/e2e/... || true
+    stop_podman_machine_script:
+      - podman machine stop 2>/dev/null || true
