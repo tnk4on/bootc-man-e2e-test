@@ -246,12 +246,29 @@ jobs:
             export GITHUB_ACTIONS=true
             export TMPDIR=/tmp
 
+            echo "=== Disk usage before tests ==="
+            df -h / /tmp 2>/dev/null || df -h /
+            echo ""
+
             echo "=== Phase 1: Non-VM tests ==="
             go test -v -tags=e2e -timeout=30m \
               -run "^Test(Container|Registry|CI|E2E|Podman|BootcMan)" \
               -count=1 ./test/e2e/... 2>&1 | tee /tmp/e2e-phase1.txt
 
             echo ""
+            echo "=== Disk usage after Phase 1 ==="
+            df -h / /tmp 2>/dev/null || df -h /
+            echo ""
+
+            # Free up space: clean Go build cache and Podman artifacts
+            go clean -cache 2>/dev/null || true
+            podman system prune -af 2>/dev/null || true
+            sudo podman system prune -af 2>/dev/null || true
+
+            echo "=== Disk usage after cleanup ==="
+            df -h / /tmp 2>/dev/null || df -h /
+            echo ""
+
             echo "=== Phase 2: VM boot tests ==="
             go test -v -tags=e2e -timeout=30m \
               -run "^TestVM(Boot|SSHConnection|InfrastructureAvailability|List|Status)" \
