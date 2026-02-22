@@ -179,6 +179,34 @@ jobs:
             sleep 10
           done
 
+      - name: Expand root filesystem
+        run: |
+          ssh ${{ env.SSH_OPTS }} -i ~/.ssh/ec2_key fedora@${{ env.VM_IP }} '
+            set -ex
+            echo "=== Disk before expansion ==="
+            df -h /
+            lsblk
+
+            # Grow the partition to fill the EBS volume
+            ROOT_DEV=$(findmnt -n -o SOURCE /)
+            ROOT_DISK=$(lsblk -no PKNAME $ROOT_DEV)
+            ROOT_PART=$(echo $ROOT_DEV | grep -oP "\d+$")
+            echo "Root device: $ROOT_DEV, Disk: /dev/$ROOT_DISK, Partition: $ROOT_PART"
+
+            sudo growpart /dev/$ROOT_DISK $ROOT_PART || echo "growpart: already expanded"
+
+            # Resize the filesystem
+            FS_TYPE=$(findmnt -n -o FSTYPE /)
+            if [ "$FS_TYPE" = "xfs" ]; then
+              sudo xfs_growfs /
+            else
+              sudo resize2fs $ROOT_DEV
+            fi
+
+            echo "=== Disk after expansion ==="
+            df -h /
+          '
+
       - name: Install dependencies and clone bootc-man
         run: |
           ssh ${{ env.SSH_OPTS }} -i ~/.ssh/ec2_key fedora@${{ env.VM_IP }} '
