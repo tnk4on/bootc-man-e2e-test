@@ -244,20 +244,22 @@ jobs:
 
             export CI=true
             export GITHUB_ACTIONS=true
-            export TMPDIR=/tmp
+            # /tmp on Fedora is tmpfs (RAM-backed, ~8GB). Use /var/tmp (disk-backed)
+            # because the convert stage creates a 10GB raw disk image.
+            export TMPDIR=/var/tmp
 
             echo "=== Disk usage before tests ==="
-            df -h / /tmp 2>/dev/null || df -h /
+            df -h / /tmp /var/tmp 2>/dev/null || df -h /
             echo ""
 
             echo "=== Phase 1: Non-VM tests ==="
             go test -v -tags=e2e -timeout=30m \
               -run "^Test(Container|Registry|CI|E2E|Podman|BootcMan)" \
-              -count=1 ./test/e2e/... 2>&1 | tee /tmp/e2e-phase1.txt
+              -count=1 ./test/e2e/... 2>&1 | tee /var/tmp/e2e-phase1.txt
 
             echo ""
             echo "=== Disk usage after Phase 1 ==="
-            df -h / /tmp 2>/dev/null || df -h /
+            df -h / /tmp /var/tmp 2>/dev/null || df -h /
             echo ""
 
             # Free up space: clean Go build cache and Podman artifacts
@@ -266,19 +268,19 @@ jobs:
             sudo podman system prune -af 2>/dev/null || true
 
             echo "=== Disk usage after cleanup ==="
-            df -h / /tmp 2>/dev/null || df -h /
+            df -h / /tmp /var/tmp 2>/dev/null || df -h /
             echo ""
 
             echo "=== Phase 2: VM boot tests ==="
             go test -v -tags=e2e -timeout=30m \
               -run "^TestVM(Boot|SSHConnection|InfrastructureAvailability|List|Status)" \
-              -count=1 ./test/e2e/... 2>&1 | tee /tmp/e2e-phase2.txt
+              -count=1 ./test/e2e/... 2>&1 | tee /var/tmp/e2e-phase2.txt
 
             echo ""
             echo "=== Phase 3: Bootc tests (requires running VM) ==="
             go test -v -tags=e2e -timeout=30m \
               -run "^TestBootc(Status|StatusJSON|Upgrade|Switch|Rollback)" \
-              -count=1 ./test/e2e/... 2>&1 | tee /tmp/e2e-phase3.txt
+              -count=1 ./test/e2e/... 2>&1 | tee /var/tmp/e2e-phase3.txt
           '
 
       - name: Run E2E cleanup
@@ -298,7 +300,7 @@ jobs:
         run: |
           mkdir -p /tmp/e2e-results
           scp ${{ env.SSH_OPTS }} -i ~/.ssh/ec2_key \
-            fedora@${{ env.VM_IP }}:/tmp/e2e-phase*.txt \
+            fedora@${{ env.VM_IP }}:/var/tmp/e2e-phase*.txt \
             /tmp/e2e-results/ 2>/dev/null || true
 
       - name: Test summary
