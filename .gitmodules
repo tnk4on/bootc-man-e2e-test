@@ -1,0 +1,3 @@
+[submodule "refs/bootc-man-dev"]
+	path = refs/bootc-man-dev
+	url = git@github.com:tnk4on/bootc-man-dev.git

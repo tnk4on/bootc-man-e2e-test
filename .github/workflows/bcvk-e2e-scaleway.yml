@@ -1,0 +1,93 @@
+name: bcvk E2E (Scaleway macOS)
+on:
+  workflow_dispatch:
+    inputs:
+      bcvk_ref:
+        description: 'bcvk branch/ref to test'
+        default: 'wip/macos-vfkit-pr'
+      bcvk_repo:
+        description: 'bcvk repository'
+        default: 'tnk4on/bcvk'
+      skip_ephemeral:
+        description: 'Skip ephemeral tests'
+        type: boolean
+        default: false
+      skip_persistent:
+        description: 'Skip persistent tests'
+        type: boolean
+        default: false
+
+jobs:
+  e2e:
+    runs-on: self-hosted-mac
+    timeout-minutes: 90
+    env:
+      PATH: /opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
+      LOG_DIR: /tmp/bcvk-e2e-logs
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Prepare log directory
+        run: |
+          rm -rf $LOG_DIR
+          mkdir -p $LOG_DIR
+
+      - name: Setup macOS environment
+        run: ./scripts/setup-macos.sh 2>&1 | tee $LOG_DIR/01-setup.log
+
+      - name: Build bcvk
+        run: |
+          set -euo pipefail
+          rm -rf ~/bcvk-build
+          git clone --depth=1 -b ${{ inputs.bcvk_ref }} \
+            https://github.com/${{ inputs.bcvk_repo }}.git ~/bcvk-build
+          cd ~/bcvk-build
+          cargo build --release
+          codesign -fs - target/release/bcvk
+          sudo ln -sf "$(pwd)/target/release/bcvk" /usr/local/bin/bcvk
+          bcvk --version
+          2>&1 | tee $LOG_DIR/02-build-bcvk.log
+
+      - name: Build test disk (bootc-man ci)
+        if: ${{ !inputs.skip_persistent }}
+        run: |
+          set -euo pipefail
+          if [[ ! -d ~/bootc-man-build ]]; then
+            git clone --depth=1 https://github.com/tnk4on/bootc-man.git ~/bootc-man-build
+            cd ~/bootc-man-build && make build
+          fi
+          cd ~/bootc-man-build
+          SAMPLE_DIR=samples/bootc-ci-test
+          if [[ ! -f "$SAMPLE_DIR/output/images/bootc-ci-test.raw" ]]; then
+            cd "$SAMPLE_DIR"
+            ~/bootc-man-build/bin/bootc-man ci run --stage build,convert
+          fi
+          2>&1 | tee $LOG_DIR/03-build-disk.log
+
+      - name: Run bcvk E2E tests
+        run: |
+          set -euo pipefail
+          DISK=$(find ~/bootc-man-build/samples/bootc-ci-test -name "*.raw" \
+            -path "*/output/*" 2>/dev/null | head -1)
+          export BCVK_TEST_DISK="${DISK:-}"
+          export BCVK_TEST_SSH_USER=user
+          export BCVK_TEST_LOG_DIR=$LOG_DIR
+          export BCVK_SKIP_EPHEMERAL=${{ inputs.skip_ephemeral && '1' || '0' }}
+          export BCVK_SKIP_PERSISTENT=${{ inputs.skip_persistent && '1' || '0' }}
+          refs/bootc-man-dev/tests/test-bcvk-macos.sh 2>&1 | tee $LOG_DIR/04-e2e-test.log
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bcvk-e2e-logs-${{ github.run_number }}
+          path: /tmp/bcvk-e2e-logs/
+          retention-days: 30
+
+      - name: Cleanup
+        if: always()
+        run: |
+          bcvk ephemeral rm-all --force 2>/dev/null || true
+          bcvk vm rm-all --force 2>/dev/null || true
