@@ -26,8 +26,6 @@ jobs:
       LOG_DIR: /tmp/bcvk-e2e-logs
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: true
 
       - name: Prepare log directory
         run: |
@@ -76,7 +74,7 @@ jobs:
           export BCVK_TEST_LOG_DIR=$LOG_DIR
           export BCVK_SKIP_EPHEMERAL=${{ inputs.skip_ephemeral && '1' || '0' }}
           export BCVK_SKIP_PERSISTENT=${{ inputs.skip_persistent && '1' || '0' }}
-          refs/bootc-man-dev/tests/test-bcvk-macos.sh 2>&1 | tee $LOG_DIR/04-e2e-test.log
+          scripts/test-bcvk-macos.sh 2>&1 | tee $LOG_DIR/04-e2e-test.log
 
       - name: Upload logs
         if: always()
