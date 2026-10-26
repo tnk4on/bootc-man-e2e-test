@@ -36,6 +36,7 @@ env:
   BOOTC_MAN_REF: ${{ github.event.inputs.bootc_man_ref || 'main' }}
 
 permissions:
+  id-token: write
   contents: read
 
 jobs:
@@ -50,8 +51,7 @@ jobs:
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: arn:aws:iam::567297530339:role/github-actions-ec2
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Upgrade AWS CLI
